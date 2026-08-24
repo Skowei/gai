@@ -1,0 +1,37 @@
+# Dane (stan środowiska - nie w Git!)
+data/
+backups/*.zip
+
+# Środowisko i sekrety
+.env
+*.local
+
+# Python wirtualne
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.eggs/
+dist/
+build/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Systemowe
+.DS_Store
+Thumbs.db
+
+# Ollama modele (jeśli nie w katalogu systemowym)
+ollama/.ollama/models/

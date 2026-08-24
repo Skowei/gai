@@ -1,0 +1,12 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Instalacja Flask i requests
+RUN pip install --no-cache-dir flask requests
+
+# Kopia pliku app.py (jest mounted jako volume, ale dodajemy do Dockerfile dla budowania)
+COPY app.py .
+
+# Uruchom aplikację Flask
+CMD ["python", "app.py"]

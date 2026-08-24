@@ -1,0 +1,53 @@
+name: Docker Build & Deploy
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-build-
+          restore-keys: |
+            ${{ runner.os }}-build-
+
+      - name: Build and start TencentDB-Agent-Memory
+        run: |
+          echo "Building TencentDB-Agent-Memory..."
+          cd TencentDB-Agent-Memory/MemoryCore
+          docker build -t ai-memory-core .
+
+      - name: Start all containers
+        run: |
+          echo "Starting services..."
+          export POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}"
+          export TENCENT_LLM_API_KEY="${{ secrets.TENCENT_LLM_API_KEY }}"
+          docker compose up -d --build
+
+      - name: Wait for PostgreSQL
+        run: |
+          echo "Waiting for PostgreSQL to be ready..."
+          sleep 30
+
+      - name: Wait for Redis
+        run: |
+          echo "Waiting for Redis to be ready..."
+          sleep 10
+
+      - name: Check TencentDB health
+        run: |
+          echo "Checking TencentDB health..."
+          curl -f http://localhost:8420/health || exit 1

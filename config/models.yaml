@@ -1,0 +1,72 @@
+# =============================================================================
+# AI Ecosystem V2.0 - Mapowanie Modeli Ollama do Ról AI
+# =============================================================================
+models:
+  # ---------------------------------------------------------------------------
+  # Kodeks / SQL / XML / SVG - Qwen Code Excellence
+  # ---------------------------------------------------------------------------
+  code_analysis:
+    name: qwen2.5-coder:7b-instruct
+    role:
+      - "code_review"
+      - "sql_generation"
+      - "xml_parsing"
+      - "svg_manipulation"
+    
+  # ---------------------------------------------------------------------------
+  # Logika / Reasoning - DeepSeek R1 (Chain of Thought)
+  # Fallbacki: qwen3.5, phi-4
+  # ---------------------------------------------------------------------------
+  reasoning:
+    name: deepseek-r1:8b
+    role:
+      - "reasoning"
+      - "planning"
+      - "debugging"
+    fallbacks:
+      - qwen3.5:7b-instruct
+      - phi-4
+    
+  # ---------------------------------------------------------------------------
+  # Tekst / Obsidian / Polski - Llama 3.1 Excellent PL Support
+  # ---------------------------------------------------------------------------
+  text:
+    name: llama3.1:8b-instruct
+    role:
+      - "summarization"
+      - "nlp_tasks"
+      - "pl_translation"
+      - "obsidian_vault_reading"
+    
+  # ---------------------------------------------------------------------------
+  # Vision / Grafiki / SVG - Qwen VL (Vision Language)
+  # ---------------------------------------------------------------------------
+  vision:
+    name: qwen2-vl:7b-instruct
+    role:
+      - "image_analysis"
+      - "svg_parsing"
+      - "chart_reading"
+    
+  # ---------------------------------------------------------------------------
+  # Embeddings dla RAG (Retrieval Augmented Generation)
+  # ---------------------------------------------------------------------------
+  embedding:
+    name: bge-m3
+    dimension: 1024
+    roles:
+      - "dense_retrieval"
+      - "semantic_search"
+
+# =============================================================================
+# Default model do użytku ogólnego
+# =============================================================================
+default_model: llama3.1:8b-instruct
+
+# =============================================================================
+# Limity i ustawienia Ollama
+# =============================================================================
+ollama_settings:
+  timeout: 120s
+  keep_alive: 5m
+  num_ctx: 4096

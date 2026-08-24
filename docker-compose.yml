@@ -1,0 +1,86 @@
+
+services:
+  # =============================================================================
+  # BASE 1: PostgreSQL 16 z pgvector (Baza danych & RAG)
+  # =============================================================================
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: postgres
+    environment:
+      - POSTGRES_USER=agent
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-change_this_in_production}
+      - POSTGRES_DB=agent
+    volumes:
+      - data:/var/lib/postgresql/data
+      - ./data/pg_init:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # =============================================================================
+  # BASE 2: Redis 7 Alpine (Semantic Cache)
+  # =============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: ai_memory_redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - ./data/redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # =============================================================================
+  # MEMORY HUB: TencentDB Agent Memory (L0-L3) z GitHub - Local Build
+  # =============================================================================
+  agent_memory:
+    build:
+      context: ./TencentDB-Agent-Memory/MemoryCore
+      dockerfile: Dockerfile
+    container_name: ai_memory_tencent
+    environment:
+      - NODE_ENV=production
+      - TDAI_LLM_API_KEY=${TENCENT_LLM_API_KEY:-your_openai_api_key_here}
+      - TDAI_LLM_BASE_URL=https://api.lkeap.cloud.tencent.com/v1
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - STATE_BACKEND=local
+    ports:
+      - "8420:8420"
+    volumes:
+      - ./TencentDB-Agent-Memory/MemoryCore/tdai-gateway.yaml:/data/config/tdai-gateway.yaml
+    depends_on:
+      - redis
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # =============================================================================
+  # FLASK FRONTEND: Flask AI Chat Client (Interfejs webowy)
+  # =============================================================================
+  flask:
+    build:
+      context: .
+      dockerfile: Dockerfile.flask
+    container_name: ai_memory_flask_frontend
+    ports:
+      - "5000:5000"
+    environment:
+      - API_URL=http://agent_memory:8420
+      - API_KEY=test-team
+    volumes:
+      - ./app.py:/app.py:ro
+    depends_on:
+      - agent_memory
+    restart: unless-stopped
+
+volumes:
+  data:
