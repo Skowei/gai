@@ -1,27 +1,25 @@
-# Git
+# Git & IDE
 .git
 .gitignore
 .DS_Store
-
-# IDE
 .idea
 .vscode
 *.swp
 *.swo
 
-# Node
+# Node & Python
 node_modules
 npm-debug.log
 yarn-error.log
-
-# Python (jeśli używasz w innych projektach)
 __pycache__
 *.pyc
+*.pyo
 .env
 
-# Własne pliki AI Memory
-TencentDB-Agent-Memory/MemoryCore/node_modules
-TencentDB-Agent-Memory/MemoryCore/.env
+# Bazy danych i lokalne repozytorium (KLUCZOWE)
+data/
+TencentDB-Agent-Memory/
+backups/
 
 # Docker cache
 docker-compose.override.yml

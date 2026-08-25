@@ -6,7 +6,8 @@ models:
   # Kodeks / SQL / XML / SVG - Qwen Code Excellence
   # ---------------------------------------------------------------------------
   code_analysis:
-    name: qwen2.5-coder:7b-instruct
+    provider: "ollama"
+    name: ${CODE_MODEL}
     role:
       - "code_review"
       - "sql_generation"
@@ -18,7 +19,8 @@ models:
   # Fallbacki: qwen3.5, phi-4
   # ---------------------------------------------------------------------------
   reasoning:
-    name: deepseek-r1:8b
+    provider: "ollama"
+    name: ${REASONING_MODEL}
     role:
       - "reasoning"
       - "planning"
@@ -31,7 +33,8 @@ models:
   # Tekst / Obsidian / Polski - Llama 3.1 Excellent PL Support
   # ---------------------------------------------------------------------------
   text:
-    name: llama3.1:8b-instruct
+    provider: "ollama"
+    name: ${TEXT_MODEL}
     role:
       - "summarization"
       - "nlp_tasks"
@@ -42,7 +45,8 @@ models:
   # Vision / Grafiki / SVG - Qwen VL (Vision Language)
   # ---------------------------------------------------------------------------
   vision:
-    name: qwen2-vl:7b-instruct
+    provider: "ollama"
+    name: ${VISION_MODEL}
     role:
       - "image_analysis"
       - "svg_parsing"
@@ -52,7 +56,8 @@ models:
   # Embeddings dla RAG (Retrieval Augmented Generation)
   # ---------------------------------------------------------------------------
   embedding:
-    name: bge-m3
+    provider: "ollama"
+    name: ${EMBEDDING_MODEL}
     dimension: 1024
     roles:
       - "dense_retrieval"
@@ -61,12 +66,12 @@ models:
 # =============================================================================
 # Default model do użytku ogólnego
 # =============================================================================
-default_model: llama3.1:8b-instruct
+default_model: ${TEXT_MODEL}
 
 # =============================================================================
 # Limity i ustawienia Ollama
 # =============================================================================
 ollama_settings:
-  timeout: 120s
-  keep_alive: 5m
-  num_ctx: 4096
+  timeout: ${OLLAMA_TIMEOUT}
+  keep_alive: ${OLLAMA_KEEP_ALIVE}
+  num_ctx: ${OLLAMA_NUM_CTX}

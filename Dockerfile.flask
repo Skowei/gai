@@ -2,11 +2,18 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Instalacja Flask i requests
-RUN pip install --no-cache-dir flask requests
+# Instalacja narzędzi systemowych wymaganych przez psycopg2 / budowanie pakietów
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-# Kopia pliku app.py (jest mounted jako volume, ale dodajemy do Dockerfile dla budowania)
-COPY app.py .
+# Instalacja zależności z requirements.txt
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Uruchom aplikację Flask
+# Kopia całego projektu (katalogi src, config, app.py)
+COPY . .
+
+# Domyślne uruchomienie
 CMD ["python", "app.py"]

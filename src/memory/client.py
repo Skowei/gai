@@ -1,196 +1,266 @@
 """
-=============================================================================
+==============================================================================
 AI Ecosystem V2.0 - Memory Client
-Klient do zarządzania pamięcią agenta - REST API (TencentDB) + Local DB
-DOSTĘPNY: memory_pg_database, memory_redis_db, memory_agent_memory_endpoint
-=============================================================================
+L0 (Redis)      - krótkoterminowa pamięć robocza / cache
+L1 (PostgreSQL) - pamięć długoterminowa z embeddings (pgvector)
+L2/L3 (Postgres)- kontekst okna (ostatnie Q&A)
+==============================================================================
 """
 
-import requests
-import psycopg2
-import redis
+import os
+import json
+import logging
 from typing import Any, Dict, List, Optional
-from dataclasses import dataclass
+
+import psycopg2
+import psycopg2.extras
+import psycopg2.pool
+import redis
+
+log = logging.getLogger("memory")
 
 
-# =============================================================================
-# KONFIGURACJA - REST API do TencentDB Agent Memory + Local DB
-# =============================================================================
+def _env(key: str, default: str) -> str:
+    return os.getenv(key, default)
 
 
-@dataclass
 class MemoryConfig:
-    """Konfiguracja klienta pamięci."""
-    pg_connection_string: str = "postgresql://agent:your_secure_password@localhost:5432/ai_memory"
-    redis_url: str = "redis://redis:6379/0"
-    redis_db: int = 1
-    memory_table: str = "agent_memory"
-    # TencentDB Agent Memory REST API endpoint
-    agent_memory_endpoint: str = "http://agent_memory:8080/v1/embeddings"
+    """Konfiguracja klienta pamięci (czytana z env)."""
+
+    def __init__(self, pg_connection_string: Optional[str] = None,
+                 redis_url: Optional[str] = None,
+                 redis_db: int = 0):
+        self.pg_connection_string = pg_connection_string or (
+            f"postgresql://{_env('MEMORY_PG_USER', 'agent')}:"
+            f"{_env('MEMORY_PG_PASSWORD', '12345678')}@"
+            f"{_env('MEMORY_PG_HOST', 'postgres')}:"
+            f"{_env('MEMORY_PG_PORT', '5432')}/"
+            f"{_env('MEMORY_PG_DATABASE', 'ai_memory')}"
+        )
+        self.redis_url = redis_url or _env("REDIS_URL", "redis://localhost:6379/0")
+        self.redis_db = redis_db
+        self.memory_table = "agent_memory"
+        self.history_table = "rag_history"
 
 
 class MemoryClient:
-    """
-    Klient do zarządzania pamięcią agenta AI.
-    
-    ARCHITEKTURA PAMIĘCI:
-    ---------------------
-    L0 (Redis): Krótkoterminowa pamięć robocza - szybki dostęp
-    L1 (TencentDB REST API + PostgreSQL + pgvector): Przetworzona wiedza długoterminowa
-    L2 (PostgreSQL): Doświadczenia & metadane
-    L3 (Pamięć kontekstu): Okno kontekstowe RAG - ostatnie Q&A
-    
-    Usage:
-        >>> client = MemoryClient()
-        >>> client.store("system_instructions", "Ty jesteś asystentem...")
-        >>> results = client.search_semantic("Jak działa API?")
-    """
+    """Klient pamięci agenta AI (README: L0-L3)."""
 
     def __init__(self, config: Optional[MemoryConfig] = None):
         self.config = config or MemoryConfig()
         self._pg_pool = None
-        self._redis_client = None
-        self._http_session = requests.Session()
+        self._redis = None
         self._connect()
 
-    def _connect(self):
-        """Inicjalizacja połączeń z PostgreSQL, Redis i REST API."""
-        # POŁĄCZENIE: PostgreSQL (L1 + L2)
+    # ------------------------------------------------------------ połączenia
+    def _connect(self) -> None:
         try:
-            self._pg_pool = psycopg2.pool.SimpleConnectionPool(
-                minconn=1, maxconn=5,
-                host="localhost", port=5432,
-                database=self.config.memory_pg_database or "ai_memory",
-                user="agent", password="your_secure_password",
+            self._pg_pool = psycopg2.pool.ThreadedConnectionPool(
+                minconn=1, maxconn=5, dsn=self.config.pg_connection_string
             )
-        except Exception as e:
-            print(f"⚠️ Postgres połączenie nieudane: {e}")
-        
-        # POŁĄCZENIE: Redis (L0 + L3)
+            log.debug("PostgreSQL połączony")
+        except Exception as exc:
+            log.warning("Postgres połączenie nieudane: %s", exc)
+
         try:
-            self._redis_client = redis.Redis.from_url(self.config.redis_url, db=self.config.redis_db)
-            self._redis_client.ping()
-            print("✅ Redis podłączony")
-        except Exception as e:
-            print(f"⚠️ Redis połączenie nieudane: {e}")
-        
-        # TEST: REST API do agent_memory (L1 embeddings)
-        try:
-            test_embedding = self._get_embeddings("test embedding 0.001 " * 128)
-            print(f"✅ TencentDB Agent Memory REST API podłączony")
-        except Exception as e:
-            print(f"⚠️ REST API agent_memory nieosiągalne: {e}")
+            self._redis = redis.Redis.from_url(
+                self.config.redis_url, db=self.config.redis_db,
+                decode_responses=True,
+            )
+            self._redis.ping()
+            log.debug("Redis podłączony")
+        except Exception as exc:
+            log.warning("Redis połączenie nieudane: %s", exc)
 
     def _get_embeddings(self, text: str) -> Optional[List[float]]:
-        """Pobieranie embeddings z TencentDB Agent Memory via REST API."""
+        """Embeddings przez lokalną Ollamę (bge-m3)."""
         try:
-            url = self.config.agent_memory_endpoint
-            payload = {"input": [text], "model": "bge-m3"}
-            response = self._http_session.post(url, json=payload, timeout=30.0)
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("embeddings", [])[0] if isinstance(data.get("embeddings"), list) else None
-            else:
-                print(f"⚠️ REST API error {response.status_code}")
-                return None
-        except requests.RequestException as e:
-            print(f"⚠️ HTTP request failed: {e}")
-            return None
-        except Exception as e:
-            print(f"⚠️ Embedding generation failed: {e}")
+            from src.llm import ollama_embeddings
+            return ollama_embeddings(text)
+        except Exception as exc:
+            log.debug("Embeddings unavailable: %s", exc)
             return None
 
-    def store(self, key: str, content: str, metadata: Optional[Dict[str, Any]] = None) -> bool:
-        """Zapis treści z embeddings w Redis + PostgreSQL."""
-        embedding = self._get_embeddings(content)
-        if not embedding:
-            print(f"⚠️ Nie udało się pobrać embeddings")
-            return False
-        
-        # Zapis w Redis (L0 - szybki dostęp)
-        if self._redis_client:
-            redis_key = f"memory:l0:{key}"
-            ttl_seconds = metadata.get("ttl", 3600) if metadata else 3600
-            self._redis_client.setex(redis_key, ttl_seconds, json.dumps(content))
-        
-        # Zapis w PostgreSQL + pgvector (L1 - semantic storage)
-        if self._pg_pool and embedding is not None:
-            try:
-                with self._pg_pool.get() as conn:
+    def _ensure_schema(self) -> None:
+        """Utworzenie tabeli agent_memory (pgvector) jeśli nie istnieje."""
+        if not self._pg_pool:
+            return
+        try:
+            with self._pg_pool.getconn() as conn:
+                try:
                     cur = conn.cursor()
-                    insert_query = """INSERT INTO agent_memory (content, embedding, updated_at) 
-                                      VALUES (%s::vector, %s::jsonb, NOW()) 
-                                      ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content,
-                                                                          embedding = EXCLUDED.embedding,
-                                                                          updated_at = NOW() RETURNING id;"""
-                    cur.execute(insert_query, (embedding,))
+                    cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+                    cur.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS {t} (
+                            id TEXT PRIMARY KEY,
+                            content TEXT NOT NULL,
+                            embedding vector(1024),
+                            metadata JSONB NOT NULL DEFAULT '{{}}',
+                            updated_at TIMESTAMPTZ DEFAULT NOW()
+                        );
+                        """.format(t=self.config.memory_table)
+                    )
                     conn.commit()
-            except Exception as e:
-                print(f"⚠️ Postgres write failed: {e}")
-        return True
+                finally:
+                    self._pg_pool.putconn(conn)
+        except Exception as exc:
+            log.warning("Schema ensure failed: %s", exc)
+
+    # ------------------------------------------------------------------ zapis
+    def store(self, key: str, content: str,
+              metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """Zapis treści w L0 (Redis) i L1 (Postgres + pgvector)."""
+        metadata = metadata or {}
+        embedding = self._get_embeddings(content)
+
+        # L0: Redis (krótkoterminowa, TTL)
+        if self._redis:
+            try:
+                ttl = int(metadata.get("ttl", 3600))
+                self._redis.setex(f"memory:l0:{key}", ttl, json.dumps(content))
+            except Exception as exc:
+                log.debug("Redis store failed: %s", exc)
+
+        # L1: Postgres + pgvector
+        if self._pg_pool and embedding:
+            try:
+                self._ensure_schema()
+                with self._pg_pool.getconn() as conn:
+                    try:
+                        cur = conn.cursor()
+                        cur.execute(
+                            "INSERT INTO {t} (id, content, embedding, metadata) "
+                            "VALUES (%s, %s, %s, %s) "
+                            "ON CONFLICT (id) DO UPDATE SET "
+                            "content = EXCLUDED.content, "
+                            "embedding = EXCLUDED.embedding, "
+                            "metadata = EXCLUDED.metadata, "
+                            "updated_at = NOW();".format(t=self.config.memory_table),
+                            (key, content,
+                             json.dumps(embedding),
+                             json.dumps(metadata, ensure_ascii=False)),
+                        )
+                        conn.commit()
+                    finally:
+                        self._pg_pool.putconn(conn)
+                return True
+            except Exception as exc:
+                log.warning("Postgres store failed: %s", exc)
+        return bool(self._redis)
+
+    # --------------------------------------------------------------- odczyt
+    def single_store(self, key: str) -> Optional[str]:
+        """Odczyt jednego wpisu z Redis (L0)."""
+        if not self._redis:
+            return None
+        try:
+            raw = self._redis.get(f"memory:l0:{key}")
+            if raw:
+                return raw
+        except Exception:
+            pass
+        return None
 
     def search_semantic(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        """Semantyczne wyszukiwanie w L1."""
+        """Semantyczne wyszukiwanie w L1 (pgvector)."""
         if not self._pg_pool:
             return []
+        embedding = self._get_embeddings(query)
+        if not embedding:
+            return []
         try:
-            with self._pg_pool.get() as conn:
-                cur = conn.cursor()
-                dummy_embedding = [0.0] * 1024
-                search_query = """SELECT id, content, metadata->>'created_at' as created_at,
-                                   ROUND((embedding <=> %s::vector)::numeric, 2) as distance 
-                                  FROM agent_memory ORDER BY embedding <=> %s::vector LIMIT %s;"""
-                cur.execute(search_query, (dummy_embedding, dummy_embedding, top_k))
-                results = cur.fetchall()
-            return [{"id": r[0], "content": r[1], "created_at": r[2], "distance": r[3]} for r in results]
-        except Exception as e:
-            print(f"⚠️ Semantic search failed: {e}")
+            with self._pg_pool.getconn() as conn:
+                try:
+                    cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+                    cur.execute(
+                        "SELECT id, content, metadata, "
+                        "ROUND((embedding <=> %s::vector)::numeric, 3) AS distance "
+                        "FROM {t} ORDER BY embedding <=> %s::vector LIMIT %s;"
+                        .format(t=self.config.memory_table),
+                        (json.dumps(embedding), json.dumps(embedding), top_k),
+                    )
+                    rows = cur.fetchall()
+                finally:
+                    self._pg_pool.putconn(conn)
+            return [
+                {"id": r["id"], "content": r["content"],
+                 "metadata": r["metadata"], "distance": r["distance"]}
+                for r in rows
+            ]
+        except Exception as exc:
+            log.debug("Semantic search failed: %s", exc)
             return []
 
     def retrieve_from_context_window(self, max_entries: int = 5) -> List[Dict[str, str]]:
-        """Pobieranie danych z okna kontekstowego (L3)."""
+        """Pobieranie L3: ostatnie Q&A z tabeli history."""
         if not self._pg_pool:
             return []
         try:
-            with self._pg_pool.get() as conn:
-                cur = conn.cursor()
-                query = "SELECT question, answer FROM rag_history ORDER BY created_at DESC LIMIT %s;"
-                cur.execute(query, (max_entries,))
-                results = cur.fetchall()
-            return [{"question": r[0], "answer": r[1] if len(r) > 1 else ""} for r in results]
-        except Exception as e:
-            print(f"⚠️ Context window retrieval failed: {e}")
+            with self._pg_pool.getconn() as conn:
+                try:
+                    cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+                    cur.execute(
+                        "SELECT question, answer FROM {t} "
+                        "ORDER BY created_at DESC LIMIT %s;"
+                        .format(t=self.config.history_table),
+                        (max_entries,),
+                    )
+                    rows = cur.fetchall()
+                finally:
+                    self._pg_pool.putconn(conn)
+            return [{"question": r["question"], "answer": r["answer"]} for r in rows]
+        except Exception as exc:
+            log.debug("Context window failed: %s", exc)
             return []
+
+    def build_context(self, query: str, top_k: int = 3) -> str:
+        """Buduj kontekst RAG (pamięć semantyczna + ostatnie Q&A)."""
+        parts = []
+        for r in self.search_semantic(query, top_k=top_k)[:top_k]:
+            parts.append(f"- {r['content'][:300]}")
+        for item in self.retrieve_from_context_window(max_entries=3):
+            parts.append(f"- Q: {item['question'][:120]}\n  A: {item['answer'][:200]}")
+        return "\n".join(parts)
 
     def get_total_interactions(self) -> int:
-        """Pobieranie licznika interakcji."""
-        if not self._pg_pool:
+        """Licznik interakcji (z Redis)."""
+        if not self._redis:
             return 0
         try:
-            with self._pg_pool.get() as conn:
-                cur = conn.cursor()
-                cur.execute("SELECT COALESCE(stat_value->>'count', '0')::INTEGER FROM agent_stats WHERE stat_key = %s", ("total_interactions",))
-                row = cur.fetchone()
-            return int(row[0]) if row else 0
-        except Exception as e:
-            print(f"⚠️ Failed to get interactions count: {e}")
+            return int(self._redis.get("memory:l3:total_interactions") or "0")
+        except Exception:
             return 0
 
-    def reset(self):
-        """Reset pamięci."""
-        if not self._pg_pool or not self._redis_client:
+    def reset(self) -> None:
+        """Reset pamięci L0 (Redis klucze memory:l0:*)."""
+        if not self._redis:
             return
         try:
-            keys = [k for k in self._redis_client.keys() if k.startswith("memory:l0")]
+            keys = [k for k in self._redis.keys("memory:l0:*")]
             if keys:
-                self._redis_client.delete(*keys)
-            print("✅ Pamięć zresetowana")
-        except Exception as e:
-            print(f"⚠️ Reset failed: {e}")
+                self._redis.delete(*keys)
+            log.info("Pamięć L0 zresetowana (%s kluczy)", len(keys))
+        except Exception as exc:
+            log.debug("Reset failed: %s", exc)
 
-    def close(self):
-        """Zamykanie połączeń."""
+    def close(self) -> None:
         if self._pg_pool:
             self._pg_pool.closeall()
-        if self._redis_client:
-            self._redis_client.close()
+        if self._redis:
+            self._redis.close()
+
+
+# =============================================================================
+# SINGLETON
+# =============================================================================
+
+_singleton: Optional[MemoryClient] = None
+
+
+def get_memory_client(config: Optional[MemoryConfig] = None) -> MemoryClient:
+    """Zwraca singleton MemoryClient (bez kolejnych połączeń)."""
+    global _singleton
+    if _singleton is None:
+        _singleton = MemoryClient(config)
+    return _singleton

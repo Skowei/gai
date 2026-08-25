@@ -1,12 +1,23 @@
-# Dane (stan środowiska - nie w Git!)
+# =============================================================================
+# AI Ecosystem V2.0 - Plik ignorowanych zasobów Git
+# =============================================================================
+
+# --- DANE ŚRODOWISKA ---
+# Ignorujemy żywe pliki baz danych oraz notatki Obsidian, bo to Twoje dane prywatne
 data/
+
+# --- LOGIKA AUTOMATYZACJI I KOPII ZAPASOWYCH ---
+# Ignorujemy wszystkie wygenerowane pliki ZIP w Twoim folderze backups/.
+# Dzięki temu skrypty dump.sh, restore.sh oraz schema.sql polecą do Gita,
+# ale ciężkie i prywatne paczki ZIP z bazami danych zostaną tylko lokalnie.
 backups/*.zip
 
-# Środowisko i sekrety
+# --- SEKRETY ---
+# Bezwzględnie ignorujemy plik konfiguracyjny z hasłami i kluczami API
 .env
 *.local
 
-# Python wirtualne
+# --- PYTHON (Wirtualne środowiska i pliki tymczasowe) ---
 venv/
 env/
 ENV/
@@ -22,16 +33,17 @@ dist/
 build/
 *.egg-info/
 
-# IDE
+# --- USTAWIENIA IDE / EDYTORÓW KODU ---
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# Systemowe
+# --- PLIKI SYSTEMOWE ---
 .DS_Store
 Thumbs.db
 
-# Ollama modele (jeśli nie w katalogu systemowym)
+# --- OLLAMA (Lokalne modele) ---
+# Jeśli pobierasz modele wewnątrz projektu, nie wypychamy gigabajtowych wag do Gita
 ollama/.ollama/models/

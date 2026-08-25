@@ -7,7 +7,7 @@ Dopuszczalne: SELECT, SHOW, DESCRIBE, EXPLAIN
 """
 
 import re
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List, Any
 from dataclasses import dataclass
 
 

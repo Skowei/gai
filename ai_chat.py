@@ -1,127 +1,148 @@
 #!/usr/bin/env python3
-"""AI Chat TUI - Terminalowy klient rozmowy z AI"""
+"""
+==============================================================================
+AI Chat TUI - Terminalowy klient rozmowy z AI (Ecosystem V2.0)
+Łączy się z lokalną Ollamą przez wspólnego klienta (src.llm).
+Uruchomienie:  python3 ai_chat.py
+Wyjście:       Ctrl+C lub /quit
+==============================================================================
+"""
 
 import curses
-import curses.textwidget
-import time
-import json
+import locale
 import sys
+from datetime import datetime
 
-def format_time():
-    return time.strftime("%H:%M")
+locale.setlocale(locale.LC_ALL, "")
 
-def chat_tui(stdscr):
-    """Main TUI application"""
-    
-    # Initialize colors
-    curses.start_color()
-    curses.use_default_colors()
-    curses.init_pair(1, curses.COLOR_WHITE, -1)  # User message
-    curses.init_pair(2, curses.COLOR_GREEN, -1)  # AI response
-    curses.init_pair(3, curses.COLOR_YELLOW, -1)  # System info
-    curses.init_pair(4, curses.COLOR_CYAN, -1)    # Loading
-    
-    # Get terminal size
-    height, width = stdscr.getmaxyx()
-    
-    # Create scrolling window for chat
-    win_y = height - 25
-    win_x = width - 60
-    
-    try:
-        chat_win = curses.newwin(win_y, win_x, 1, (width - win_x)//2)
-        status_win = curses.newwin(2, width, win_y + 2, 0)
-    except curses.error:
-        stdscr.addstr(0, 0, "Terminal zbyt mały")
-        return
-    
-    chat_win.border(curses.A_REVERSE)
-    chat_win.keypad(True)
-    
-    # Display welcome message
-    welcome = """[SYSTEM] AI Chat - rozmowa z naszym produktem AI!""" + "="*56 + """
+sys.path.insert(0, "/home/maciei/dev/ai")
 
-Wpisz wiadomość i naciśnij ENTER aby wysłać.
-Naciśnij Ctrl+C aby wyjść."""
-    chat_win.addstr(0, 0, welcome[:width-1])
-    chat_win.refresh()
-    
-    status_str = "Gotowy... Wpisz 'quit' aby zakończyć | URL: http://localhost:8420"
-    status_win.addstr(0, 0, status_str[:width-1])
-    status_win.refresh()
-    
-    messages = []
-    current_msg = ""
-    api_key = ""
-    
-    while True:
+from src.llm import ollama_chat, is_healthy, OLLAMA_BASE_URL  # noqa: E402
+
+HISTORY_LINES = []
+
+
+def format_time() -> str:
+    return datetime.now().strftime("%H:%M")
+
+
+def append_history(win, width, text: str, color_pair: int) -> None:
+    """Dodaje linię do historii z zawijaniem i odrysowuje okno."""
+    max_rows = win.getmaxyx()[0] - 2
+    avail = max(4, width - 4)
+    while len(text) > 0:
+        HISTORY_LINES.append((text[:avail], color_pair))
+        text = text[avail:]
+    start = max(0, len(HISTORY_LINES) - max_rows)
+    win.erase()
+    win.border()
+    row = 1
+    for line, cpair in HISTORY_LINES[start:]:
         try:
-            key = chat_win.getch()
-            
-            if key == -1:
-                break
-            
-            # Handle quit command
-            if key == ord('q'):
-                break
-            
-            # Handle Enter (send message)
-            if key == 10 or key == curses.KEY_ENTER:
-                if current_msg.strip():
-                    msg = current_msg.strip()
-                    
-                    # Add user message to chat
-                    chat_win.addstr(chat_win.getmaxyx()[0]-2, 2, format_time() + " [JA] " + msg[:width-5])
-                    messages.append(("JA", msg))
-                    
-                    # Clear input
-                    current_msg = ""
-                else:
-                    chat_win.addstr(1, 1, c
-
-"Brak wiadomości...")
-            
-            # Handle escape
-            elif key == 27:
-                break
-            
-            # Add character to input (printable ASCII)
-            elif 32 <= key < 127 or key == curses.KEY_BACKSPACE or key == 127 or key == curses.KEY_DC:
-                if key == curses.KEY_BACKSPACE or key == 127 or key == curses.KEY_DC:
-                    current_msg = current_msg[:-1]
-                else:
-                    current_msg += chr(key)
-            
-            # Add text to input line (for multi-char inputs like arrows)
-            elif curses.is_a_key(key):
-                c = curses.keyname(key)[:1].decode('utf-8')
-                if c:
-                    current_msg += c
-            
-        except Exception as e:
-            continue
-        
-        # Update status window
-        status_str = f"GOTOWY... Wpisz 'quit' aby zakończyć"
-        status_win.addstr(0, 0, status_str[:width-1])
-        status_win.refresh()
-        
-        # Refresh chat window (scroll if needed)
-        try:
-            chat_win.scroll()
-            chat_win.move(chat_win.getmaxyx()[0]-1, 0)
-            chat_win.refresh()
+            win.addnstr(row, 2, line, width - 4, curses.color_pair(cpair))
         except curses.error:
             pass
-    
-    curses.endwin()
+        row += 1
+    win.refresh()
 
-def main():
-    """Main entry point"""
-    stdscr = curses.initscr()
-    curses.curs_set(0)  # Hide cursor
-    chat_tui(stdscr)
-    curses.endwin()
+
+def chat_tui(stdscr) -> None:
+    """Główna pętla TUI."""
+    curses.start_color()
+    curses.use_default_colors()
+    curses.init_pair(1, curses.COLOR_WHITE, -1)   # użytkownik
+    curses.init_pair(2, curses.COLOR_GREEN, -1)   # AI
+    curses.init_pair(3, curses.COLOR_YELLOW, -1)  # system
+    curses.init_pair(4, curses.COLOR_CYAN, -1)    # input
+
+    stdscr.keypad(True)
+    height, width = stdscr.getmaxyx()
+
+    hist_win = curses.newwin(height - 3, width, 0, 0)
+    inp_win = curses.newwin(3, width, height - 3, 0)
+    inp_win.border()
+    hist_win.scrollok(True)
+
+    online = is_healthy()
+    status = "ONLINE ✅" if online else "OFFLINE ❌ (uruchom: ollama serve)"
+    append_history(hist_win, width,
+                   f"[SYSTEM] AI Chat V2.0 | {OLLAMA_BASE_URL} | {status}", 3)
+    append_history(hist_win, width,
+                   "[SYSTEM] Wpisz wiadomość i ENTER aby wysłać. /quit = wyjście.", 3)
+
+    input_text = ""
+    history = []          # pełna historia rozmowy (role/content)
+    cursor_visible = True
+
+    while True:
+        inp_win.erase()
+        inp_win.border()
+        prefix = f" {format_time()} ▶ "
+        try:
+            inp_win.addnstr(1, 1, prefix + input_text, width - 3,
+                            curses.color_pair(4))
+        except curses.error:
+            pass
+        inp_win.refresh()
+        try:
+            stdscr.move(height - 2, min(len(prefix) + len(input_text) + 1, width - 2))
+            if cursor_visible:
+                curses.curs_set(1)
+        except curses.error:
+            pass
+
+        try:
+            key = stdscr.get_wch()
+        except KeyboardInterrupt:
+            break
+
+        if key in ("\n", "\r", chr(10), chr(13)):
+            query = input_text.strip()
+            input_text = ""
+            if not query:
+                continue
+            if query.lower() in ("/quit", "/exit", "/q"):
+                break
+
+            append_history(hist_win, width, f"{format_time()} [JA] {query}", 1)
+            history.append({"role": "user", "content": query})
+
+            if not online:
+                append_history(hist_win, width,
+                               "[SYSTEM] Ollama niedostępna - nie mogę odpowiedzieć.", 3)
+                continue
+
+            append_history(hist_win, width,
+                           f"{format_time()} [AI] ⏳ myślę...", 3)
+
+            try:
+                answer = ollama_chat(history)
+            except Exception as exc:
+                answer = f"[BŁĄD] {exc}"
+            history.append({"role": "assistant", "content": answer})
+            append_history(hist_win, width, f"{format_time()} [AI] {answer}", 2)
+
+        elif key in (chr(127), "\b", curses.KEY_BACKSPACE):
+            input_text = input_text[:-1]
+        elif isinstance(key, str) and key.isprintable():
+            input_text += key
+        elif key == curses.KEY_RESIZE:
+            height, width = stdscr.getmaxyx()
+            hist_win.resize(max(3, height - 3), width)
+            inp_win.mvwin(max(3, height - 3), 0)
+            append_history(hist_win, width, "", 3)
+
+    curses.curs_set(0)
+
+
+def main() -> None:
+    try:
+        curses.wrapper(chat_tui)
+    except curses.error as exc:
+        print(f"Terminal error: {exc}")
+        sys.exit(1)
+    print("Do zobaczenia! 👋")
+
 
 if __name__ == "__main__":
     main()
