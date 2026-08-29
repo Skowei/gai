@@ -1,15 +1,20 @@
 import asyncio
+import logging
 import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from watchfiles import awatch  # Oficjalny asynchroniczny silnik obserwatora plików
+from watchfiles import awatch
 from pathlib import Path
 
 from app.api.routes import chat, cline
 from app.core.config import settings
 from app.core.memory.postgres import UnifiedMemoryManager
 from app.core.memory.indexer import index_single_file, sync_obsidian_vault
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Inicjalizujemy globalny menedżer pamięci relacyjno-wektorowej Enterprise
 memory_manager = UnifiedMemoryManager()
@@ -18,20 +23,19 @@ memory_manager = UnifiedMemoryManager()
 async def obsidian_folder_watcher():
     """Asynchroniczny proces w tle monitorujący i indeksujący w locie zmiany w Obsidian Vault (L4)."""
     vault_path = Path("/app/obsidian_vault")
-    print(f"👁️ [System] Uruchamiam automatycznego szpiega L4 dla ścieżki: {vault_path}")
+    logger.info(f"👁️ [System] Uruchamiam automatycznego szpiega L4 dla ścieżki: {vault_path}")
     
     try:
         async for changes in awatch(vault_path, force_polling=True):
             for change_type, file_path_str in changes:
                 if change_type in (1, 2):
                     file_path = Path(file_path_str)
-                    # POPRAWKA: Przepuszczamy zarówno pliki .md jak i .pdf!
                     if file_path.suffix.lower() in [".md", ".pdf"]:
                         await index_single_file(file_path)
     except asyncio.CancelledError:
-        print("[System] Zamykam automatycznego szpiega L4.")
+        logger.info("[System] Zamykam automatycznego szpiega L4.")
     except Exception as err:
-        print(f"⚠️ [System Watcher Błąd] Awaria obserwatora: {err}")
+        logger.error(f"⚠️ [System Watcher Błąd] Awaria obserwatora: {err}")
 
 
 @asynccontextmanager
@@ -40,7 +44,7 @@ async def lifespan(app: FastAPI):
     Obsługuje pełny cykl życia aplikacji w standardzie FastAPI.
     Inicjalizuje modele, bazy danych oraz uruchamia automatycznych szpiegów L4 w tle.
     """
-    print("\n🚀 [System] Uruchamiam asynchroniczny silnik kognitywny Enterprise L0-L4...")
+    logger.info("🚀 [System] Uruchamiam asynchroniczny silnik kognitywny Enterprise L0-L4...")
     
     # 1. Automatyczna synchronizacja modeli Ollama
     from app.core.llm_factory import LLMFactory
@@ -55,11 +59,11 @@ async def lifespan(app: FastAPI):
     # 4. Odpalamy automatycznego szpiega w tle jako asynchroniczne zadanie
     watcher_task = asyncio.create_task(obsidian_folder_watcher())
     
-    print("✅ [System] Wszystkie warstwy pamięci i automatyczne skanery działają.\n")
+    logger.info("✅ [System] Wszystkie warstwy pamięci i automatyczne skanery działają.")
     
     yield
     
-    print("[System] Zamykam asynchroniczne pule połączeń bazodanowych...")
+    logger.info("[System] Zamykam asynchroniczne pule połączeń bazodanowych...")
     watcher_task.cancel()
     await memory_manager.close()
 
@@ -72,6 +76,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# CORS - allow all origins for development flexibility
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -85,17 +90,17 @@ app.include_router(chat.router, prefix="/api")
 app.include_router(cline.router)
 
 
-# Niskolatencyjny kanał dla hardware'u i strumieni wideo (Zostaje w 100% nienaruszony!)
+# Niskolatencyjny kanał dla hardware'u i strumieni wideo
 @app.websocket("/ws/v1/stream")
 async def websocket_stream_endpoint(websocket: WebSocket):
     await websocket.accept()
-    print("[WebSocket] Zewnętrzny kanał danych/hardware podłączony.")
+    logger.info("[WebSocket] Zewnętrzny kanał danych/hardware podłączony.")
     try:
         while True:
             data = await websocket.receive_text()
             await websocket.send_json({"status": "processed", "message": "Zdarzenie zindeksowane."})
     except WebSocketDisconnect:
-        print("[WebSocket] Kanał danych rozłączony.")
+        logger.info("[WebSocket] Kanał danych rozłączony.")
 
 
 if __name__ == "__main__":

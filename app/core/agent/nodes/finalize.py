@@ -1,30 +1,28 @@
 import json
+import logging
 from typing import Dict, Any
 import redis.asyncio as aioredis
 from app.core.agent.state import AgentState
+from app.core.agent.nodes.utils import get_last_user_message, safe_get_attr
 from app.core.llm_factory import LLMFactory
 from app.core.memory.postgres import UnifiedMemoryManager
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
+
 memory_manager = UnifiedMemoryManager()
 redis_client = aioredis.from_url(getattr(settings, "redis_url", "redis://redis:6379/0"), decode_responses=True)
 
-def _get_last_user_message(state: AgentState) -> str:
-    messages = getattr(state, "messages", []) if not isinstance(state, dict) else state.get("messages", [])
-    if not messages: return ""
-    last_message = messages[-1]
-    if hasattr(last_message, "content"): return str(last_message.content)
-    return str(last_message)
 
 async def reflect_and_finalize_node(state: AgentState) -> Dict[str, Any]:
     """[FINAL SYNTHESIS NODE] Dynamically handles response context based on active tools."""
-    user_query = _get_last_user_message(state)
+    user_query = get_last_user_message(state)
     text_llm = LLMFactory.get_model_by_role("text")
-    session_id = state.session_id
+    session_id = safe_get_attr(state, "session_id", "default_session")
     redis_key = f"chat_session:{session_id}"
     
     # 🔍 Sprawdzamy zawartość szyny danych narzędziowych
-    raw_tool_summary = getattr(state, "tool_summary", "") or ""
+    raw_tool_summary = safe_get_attr(state, "tool_summary", "") or ""
     is_web_search = "<web_search_results>" in str(raw_tool_summary)
     
     # 🛡️ PANCERNA SELEKCJA KONTEKSTU (Ochrona przed zapychaniem wątków i halucynacjami)
@@ -36,7 +34,7 @@ async def reflect_and_finalize_node(state: AgentState) -> Dict[str, Any]:
     else:
         # Standardowy tryb lokalny / rozmowy
         history_context = raw_tool_summary
-        local_rag_context = state.memory_context
+        local_rag_context = safe_get_attr(state, "memory_context", "")
         web_context = "No live web search data requested for this step."
 
     # Krystalicznie czysty, anglojęzyczny kontekst strukturalny systemu Enterprise
@@ -73,12 +71,12 @@ async def reflect_and_finalize_node(state: AgentState) -> Dict[str, Any]:
         ])
         await redis_client.setex(redis_key, 7200, json.dumps(current_history))
     except Exception as re_err:
-        print(f"⚠️ [Memory L1 Sync Error] {re_err}")
+        logger.warning(f"[Memory L1 Sync Error] {re_err}")
 
     # --- ARCHIWIZACJA: Trwały zapis zapasowy w PostgreSQL L2 ---
     try:
         await memory_manager.log_chat_interaction(session_id, user_query, response_text)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"[Memory L2 Archive Error] Failed to log interaction: {e}")
         
     return {"final_response": response_text}

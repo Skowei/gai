@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 class ModelRoleConfig(BaseModel):
     provider: str
@@ -26,14 +26,21 @@ class SystemConfig(BaseModel):
     models: Dict[str, ModelRoleConfig]
     default_role: str
     
-    postgres_user: str = Field(default_factory=lambda: os.getenv("POSTGRES_USER", "agent"))
-    postgres_password: str = Field(default_factory=lambda: os.getenv("POSTGRES_PASSWORD", "12345678"))
-    postgres_db: str = Field(default_factory=lambda: os.getenv("POSTGRES_DB", "ai_memory"))
+    postgres_user: str = Field(default_factory=lambda: os.environ.get("POSTGRES_USER", "agent"))
+    postgres_password: str = Field(default_factory=lambda: os.environ["POSTGRES_PASSWORD"])
+    postgres_db: str = Field(default_factory=lambda: os.environ.get("POSTGRES_DB", "ai_memory"))
     database_url: str = ""
+    redis_url: str = Field(default_factory=lambda: os.environ.get("REDIS_URL", "redis://redis:6379/0"))
 
     def __init__(self, **data: Any):
         super().__init__(**data)
         self.database_url = f"postgresql://{self.postgres_user}:{self.postgres_password}@postgres:5432/{self.postgres_db}"
+
+    @validator('postgres_password')
+    def password_must_be_set(cls, v):
+        if not v or v == "12345678":
+            raise ValueError("POSTGRES_PASSWORD must be set to a secure value (not the default)")
+        return v
 
 class ConfigManager:
     _instance: Optional[SystemConfig] = None

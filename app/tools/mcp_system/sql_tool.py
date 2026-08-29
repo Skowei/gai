@@ -2,12 +2,9 @@ import logging
 from typing import Any, Dict, List, Optional
 import asyncpg
 from app.core.config import settings
-from app.memory.postgres import UnifiedMemoryManager
+from app.core.memory.postgres import UnifiedMemoryManager
 # Zachowujemy Twoje dotychczasowe guardrails bezpieczeństwa
-try:
-    from app.security.guardrails import is_safe_select_query, SecurityViolation
-except ImportError:
-    from src.security.guardrails import is_safe_select_query, SecurityViolation
+from app.security.guardrails import is_safe_select_query, SecurityViolation
 
 log = logging.getLogger("sql-tool")
 
