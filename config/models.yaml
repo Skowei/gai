@@ -1,77 +1,86 @@
 # =============================================================================
-# AI Ecosystem V2.0 - Mapowanie Modeli Ollama do Ról AI
+# AI Ecosystem V3.0 - Zaawansowana Konfiguracja Środowiska Multimodalnego
 # =============================================================================
+
+ollama_global_settings:
+  base_url: "http://ollama:11434"
+  timeout: 120
+  keep_alive: "5m"      # Agresywne czyszczenie VRAM po 5 minutach bezczynności
+  num_threads: 16        # Dopasuj do liczby fizycznych rdzeni swojego CPU
+
 models:
   # ---------------------------------------------------------------------------
-  # Kodeks / SQL / XML / SVG - Qwen Code Excellence
+  # Kod / System / Komendy Bash (Precyzja: Temp 0.0)
   # ---------------------------------------------------------------------------
   code_analysis:
     provider: "ollama"
-    name: ${CODE_MODEL}
-    role:
+    name: "qwen2.5-coder:7b-instruct-q4_K_M"
+    num_ctx: 16384      # Duże okno na całe pliki z kodem
+    temperature: 0.0    # Całkowity brak losowości
+    top_p: 1.0
+    num_predict: 2048   # Maksymalna długość wygenerowanego kodu
+    roles:
       - "code_review"
       - "sql_generation"
-      - "xml_parsing"
-      - "svg_manipulation"
+      - "bash_execution"
+      - "file_creation"
     
   # ---------------------------------------------------------------------------
-  # Logika / Reasoning - DeepSeek R1 (Chain of Thought)
-  # Fallbacki: qwen3.5, phi-4
+  # Logika / Głębokie Myślenie (DeepSeek R1)
   # ---------------------------------------------------------------------------
   reasoning:
     provider: "ollama"
-    name: ${REASONING_MODEL}
-    role:
+    name: "deepseek-r1:8b"
+    num_ctx: 8192
+    temperature: 0.6    # DeepSeek potrzebuje lekkiej elastyczności na proces myślowy
+    top_p: 0.95
+    num_predict: 4096   # Szeroki margines na sekcję <think>
+    roles:
       - "reasoning"
       - "planning"
       - "debugging"
     fallbacks:
-      - qwen3.5:7b-instruct
-      - phi-4
+      - "qwen2.5:7b-instruct"
     
   # ---------------------------------------------------------------------------
-  # Tekst / Obsidian / Polski - Llama 3.1 Excellent PL Support
+  # Tekst / Język Polski / Obsidian (Balans)
   # ---------------------------------------------------------------------------
   text:
     provider: "ollama"
-    name: ${TEXT_MODEL}
-    role:
+    name: "llama3.1:8b-instruct-q4_K_M"
+    num_ctx: 8192
+    temperature: 0.7    # Naturalny język ludzki
+    top_p: 0.9
+    num_predict: 1024
+    roles:
       - "summarization"
       - "nlp_tasks"
       - "pl_translation"
-      - "obsidian_vault_reading"
     
   # ---------------------------------------------------------------------------
-  # Vision / Grafiki / SVG - Qwen VL (Vision Language)
+  # Vision / Kamera / Dron / Analiza Wideo (Zoptymalizowany pod VRAM)
   # ---------------------------------------------------------------------------
   vision:
     provider: "ollama"
-    name: ${VISION_MODEL}
-    role:
+    name: "llama3.2-vision:11b-instruct-q4_K_M"
+    num_ctx: 4096       # Przy analizie obrazu mniejsze okno oszczędza mnóstwo VRAM-u!
+    temperature: 0.2
+    top_p: 0.9
+    num_predict: 1024
+    roles:
       - "image_analysis"
-      - "svg_parsing"
-      - "chart_reading"
+      - "video_stream_parsing"
     
   # ---------------------------------------------------------------------------
-  # Embeddings dla RAG (Retrieval Augmented Generation)
+  # Embeddings (Wyszukiwanie semantyczne L2)
   # ---------------------------------------------------------------------------
   embedding:
     provider: "ollama"
-    name: ${EMBEDDING_MODEL}
+    name: "mxbai-embed-large:latest"
     dimension: 1024
+    num_ctx: 512
     roles:
       - "dense_retrieval"
       - "semantic_search"
 
-# =============================================================================
-# Default model do użytku ogólnego
-# =============================================================================
-default_model: ${TEXT_MODEL}
-
-# =============================================================================
-# Limity i ustawienia Ollama
-# =============================================================================
-ollama_settings:
-  timeout: ${OLLAMA_TIMEOUT}
-  keep_alive: ${OLLAMA_KEEP_ALIVE}
-  num_ctx: ${OLLAMA_NUM_CTX}
+default_role: "text"

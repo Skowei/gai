@@ -1,84 +1,67 @@
-.PHONY: up down restart backup restore check help
-
 # =============================================================================
-# AI Ecosystem V2.0 - Makefile
+# COGNITIVE AI "MONSTER" ECOSYSTEM - KOKPIT STEROWANIA TERMINALA
 # =============================================================================
 
-# Kolory dla czytelności terminala
-GREEN := \033[0;32m
-YELLOW := \033[1;33m
-BLUE := \033[0;34m
-NC := \033[0m # No Color
+.PHONY: up down restart build logs logs-core shell-core clean vram-clear status help
 
-# -----------------------------------------------------------------------------
-# POMOC: wyświetla dostępne komendy
-# -----------------------------------------------------------------------------
+# Domyślna pomoc po wpisaniu samego 'make'
 help:
-	@echo "$(BLUE)=== AI Ecosystem V2.0 - Dostępne Komendy ===$(NC)"
-	@echo "  make up       - Uruchom wszystkie usługi (Postgres, Redis)"
-	@echo "  make down     - Zatrzymaj wszystkie usługi"
-	@echo "  make restart  - Zatrzymaj i uruchom ponownie"
-	@echo "  make backup   - Stwórz archiwum backupu"
-	@echo "  make restore  - Przywróć z ostatniego backupu (podaj ścieżkę jako argument)"
-	@echo "  make check    - Sprawdź status usług"
-	@echo "  make clean    - Usuń wszystkie dane i wolumeny"
-	@echo ""
+	@echo "Dostępne komendy sterowania ekosystemem:"
+	@echo "  make up           - Uruchamia cały system w tle (FastAPI na porcie 8080)"
+	@echo "  make down         - Zatrzymuje wszystkie kontenery"
+	@echo "  make restart      - Szybki restart wszystkich usług"
+	@echo "  make build        - Wymusza przebudowanie obrazów (np. po zmianie requirements.txt)"
+	@echo "  make logs         - Wyświetla strumień logów ze wszystkich usług"
+	@echo "  make logs-core    - Śledzi logi głównego mózgu FastAPI (weryfikacja bazy i RAG)"
+	@echo "  make shell-core   - Wchodzi do konsoli bash wewnątrz kontenera z kodem Pythona"
+	@echo "  make vram-clear   - Wymusza na Ollamie natychmiastowe zwolnienie pamięci karty graficznej"
+	@echo "  make clean        - Zatrzymuje kontenery i czyści pliki tymczasowe cache Pythona"
+	@echo "  make status       - Sprawdza status uruchomionych kontenerów"
 
-# -----------------------------------------------------------------------------
-# KOMENDA: up - Uruchom wszystkie usługi w tle
-# -----------------------------------------------------------------------------
+# Uruchomienie infrastruktury
 up:
-	@$(BLUE)docker-compose up -d$(NC)
-	@$(GREEN)✅ Usługi uruchomione w tle$(NC)
-	@echo "📝 Oczekiwanie na gotowość baz danych (może potrwać 30s)..."
-	@sleep 15
-	@$(GREEN)✅ System AI gotowy$(NC)
+	docker compose up -d
+	@echo "🚀 Potwór AI wystartował! FastAPI słucha na bezpiecznym porcie http://localhost:8080"
 
-# -----------------------------------------------------------------------------
-# KOMENDA: down - Zatrzymaj wszystkie usługi
-# -----------------------------------------------------------------------------
+# Zatrzymanie infrastruktury
 down:
-	@$(YELLOW)docker-compose down$(NC)
-	@$(YELLOW)⚠️ Usługi zatrzymane (dane w wolumenach nie są kasowane)$(NC)
+	docker compose down
+	@echo "🛑 System został bezpiecznie zatrzymany."
 
-# -----------------------------------------------------------------------------
-# KOMENDA: restart - Zatrzymaj i uruchom ponownie
-# -----------------------------------------------------------------------------
-restart: down up
+# Restart systemu
+restart:
+	docker compose restart
+	@echo "🔄 Wszystkie usługi zostały zrestartowane."
 
-# -----------------------------------------------------------------------------
-# KOMENDA: backup - Stwórz archiwum backupu
-# -----------------------------------------------------------------------------
-backup:
-	@chmod +x backups/*.sh
-	@$(BLUE)./backups/backup.sh$(NC)
+# Wymuszenie budowania od zera (Dockerfile.core)
+build:
+	docker compose up --build -d
+	@echo "🔥 Środowisko zostało przebudowane i uruchomione z nowymi pakietami."
 
-# -----------------------------------------------------------------------------
-# KOMENDA: restore - Przywróć z backupu
-# -----------------------------------------------------------------------------
-restore:
-	@if [ -n "$(BACKUP_FILE)" ]; then \
-		echo "$(BLUE)Przywracanie z: $(BACKUP_FILE)$$(NC)"; \
-	else \
-		read -p "Podaj ścieżkę do pliku backupu (.zip): " BACKUP_FILE; \
-	fi && \
-	chmod +x backups/restore.sh && \
-	./backups/restore.sh "$(BACKUP_FILE)"
+# Logi całego ekosystemu
+logs:
+	docker compose logs -f
 
-# -----------------------------------------------------------------------------
-# KOMENDA: check - Sprawdź status usług
-# -----------------------------------------------------------------------------
-check:
-	@docker-compose ps
+# Precyzyjne logi jądra decyzyjnego (FastAPI / LangGraph)
+logs-core:
+	docker logs ai_api_core -f
 
-# -----------------------------------------------------------------------------
-# KOMENDA: clean - Usuń wszystkie dane i wolumeny (OSTRZEŻENIE!)
-# -----------------------------------------------------------------------------
+# Wejście do powłoki kontenera Pythona
+shell-core:
+	docker exec -it ai_api_core /bin/bash
+
+# Ręczny, natychmiastowy zrzut modeli z Twojego GPU 10GB VRAM
+vram-clear:
+	@echo "🧹 Czyszczę pamięć VRAM Twojej karty graficznej..."
+	curl -X POST http://localhost:11434/api/generate -d '{"model": "", "keep_alive": 0}'
+	@echo "\n✅ VRAM zwolniony."
+
+# Status kontenerów
+status:
+	docker compose ps
+
+# Czyszczenie śmieci Pythona i zatrzymanie Dockera
 clean: down
-	@$(YELLOW)⚠️ OSTRZEŻENIE: Ta komenda usunie WSZYSTKIE dane!$(NC)\n\
-Naciśnij Ctrl+C aby anulować, lub Enter aby kontynuować\n\
-echo -n "$(YELLOW)">/dev/stdin && read
-	@docker-compose down -v
-	@$(GREEN)✅ Wszystko oczyszczone$(NC)
-
-.DEFAULT_GOAL := up
+	find . -type d -name "__pycache__" -exec rm -rf {} +
+	find . -type f -name "*.pyc" -delete
+	@echo "✨ Pliki tymczasowe Pythona zostały wyczyszczone."

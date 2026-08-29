@@ -1,17 +1,16 @@
-version: "3.8"
-
 services:
   # =============================================================================
-  # OLLAMA: Lokalny silnik modeli LLM
+  # OLLAMA DLA NVIDIA: Uruchamia się automatycznie, gdy COMPOSE_PROFILES=nvidia
   # =============================================================================
-  ollama:
+  ollama-nvidia:
     image: ollama/ollama:latest
     container_name: ollama
+    profiles:
+      - nvidia
     ports:
       - "11434:11434"
     volumes:
       - ./data/ollama:/root/.ollama
-    restart: unless-stopped
     deploy:
       resources:
         reservations:
@@ -19,8 +18,29 @@ services:
             - driver: nvidia
               capabilities: ["gpu"]
               count: all
+    restart: unless-stopped
+
   # =============================================================================
-  # BASE 1: PostgreSQL 16 z pgvector (Baza danych & RAG)
+  # OLLAMA DLA AMD: Uruchamia się automatycznie, gdy COMPOSE_PROFILES=amd
+  # =============================================================================
+  ollama-amd:
+    image: ollama/ollama:latest
+    container_name: ollama
+    profiles:
+      - amd
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./data/ollama:/root/.ollama
+    environment:
+      - OLLAMA_VULKAN=1
+    devices:
+      - "/dev/dri:/dev/dri"
+      - "/dev/kfd:/dev/kfd"
+    restart: unless-stopped
+
+  # =============================================================================
+  # BASE 1: PostgreSQL 16 z pgvector (Zunifikowana baza danych)
   # =============================================================================
   postgres:
     image: pgvector/pgvector:pg16
@@ -39,9 +59,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   # =============================================================================
-  # BASE 2: Redis 7 Alpine (Semantic Cache)
+  # BASE 2: Redis 7 Alpine (Pamięć podręczna L1 & Szyna zdarzeń)
   # =============================================================================
   redis:
     image: redis:7-alpine
@@ -56,88 +77,33 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   # =============================================================================
-  # MEMORY CORE: TencentDB Agent Memory
+  # ASYNC API CORE (FASTAPI): Nowe asynchroniczne serce systemu operacyjnego AI
   # =============================================================================
-  memory-core:
-    image: agentmemory/memory-core:latest
-    container_name: memory-core
-    environment:
-      - NODE_ENV=production
-      - STATE_BACKEND=${STATE_BACKEND}
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_KEY_PREFIX=tdai_memory
-      - BM25_LANGUAGE=en
-      # --- Mapowanie bazy PostgreSQL ---
-      - MEMORY_DRIVER=postgres
-      - DB_DIALECT=${DB_DIALECT}
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_USER=${POSTGRES_USER}
-      - DB_PASSWORD=${POSTGRES_PASSWORD}
-      - DB_DATABASE=${POSTGRES_DB}
-      # --------------------------------------
-      - TDAI_LLM_BASE_URL=${TDAI_LLM_BASE_URL}
-      - TDAI_LLM_API_KEY=${TDAI_LLM_API_KEY}
-      - TDAI_LLM_MODEL=${TDAI_LLM_MODEL}
-      - TDAI_MEMORY_EMBEDDING_PROVIDER=ollama
-      - TDAI_MEMORY_EMBEDDING_BASE_URL=${OLLAMA_BASE_URL}
-      - TDAI_MEMORY_EMBEDDING_API_KEY=${TDAI_LLM_API_KEY}
-      - TDAI_MEMORY_EMBEDDING_MODEL=${EMBEDDING_MODEL}
-      - TDAI_MEMORY_EMBEDDING_DIMENSIONS=1024
+  api-core:
+    build:
+      context: .
+      dockerfile: Dockerfile.core
+    container_name: ai_api_core
     ports:
-      - "8420:8420"
+      - "8080:8000"
+    environment:
+      - PORT=8000
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - REDIS_URL=redis://redis:6379/0
     volumes:
-      - ./data/tdai_memory:/data/tdai-memory
+      - .:/app
+      - ${OBSIDIAN_HOST_PATH}:/app/obsidian_vault
+      - ./data/local_notes:/app/local_notes
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      ollama:
-        condition: service_started
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    restart: unless-stopped
-
-  # =============================================================================
-  # FLASK FRONTEND: Flask AI Chat Client (Interfejs webowy & API)
-  # =============================================================================
-  flask:
-    build:
-      context: .
-      dockerfile: Dockerfile.flask
-    container_name: ai_memory_flask_frontend
-    ports:
-      - "8000:8000"
-    environment:
-      - PORT=8000
-      - API_URL=http://memory-core:8420
-      - API_KEY=test-team
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      - REDIS_URL=redis://redis:6379/0
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
-      - CODE_MODEL=${CODE_MODEL}
-      - REASONING_MODEL=${REASONING_MODEL}
-      - TEXT_MODEL=${TEXT_MODEL}
-      - VISION_MODEL=${VISION_MODEL}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL}
-      - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT}
-      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE}
-      - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX}
-    volumes:
-      - .:/app
-      - ${OBSIDIAN_HOST_PATH}:/app/obsidian_vault:ro
-      - ./data/local_notes:/app/local_notes:ro
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    depends_on:
-      - postgres
-      - redis
-      - memory-core
-      - ollama
     restart: unless-stopped
 
 volumes:
