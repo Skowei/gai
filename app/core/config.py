@@ -31,6 +31,8 @@ class SystemConfig(BaseModel):
     postgres_db: str = Field(default_factory=lambda: os.environ.get("POSTGRES_DB", "ai_memory"))
     database_url: str = ""
     redis_url: str = Field(default_factory=lambda: os.environ.get("REDIS_URL", "redis://redis:6379/0"))
+    pinchtab_url: str = Field(default_factory=lambda: os.environ.get("PINCHTAB_URL", "http://pinchtab:9867"))
+    pinchtab_token: str = Field(default_factory=lambda: os.environ.get("PINCHTAB_TOKEN", "pinchtab-dev-token"))
 
     def __init__(self, **data: Any):
         super().__init__(**data)

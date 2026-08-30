@@ -9,21 +9,23 @@ from pathlib import Path
 
 from app.api.routes import chat, cline
 from app.core.config import settings
-from app.core.memory.postgres import UnifiedMemoryManager
-from app.core.memory.indexer import index_single_file, sync_obsidian_vault
+from app.memory.l2.client import UnifiedMemoryManager
+from app.memory.l4.indexer import index_single_file, sync_obsidian_vault
+from app.api.deps import redis_client
+from app.services.cache_service import get_cache_stats
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Inicjalizujemy globalny menedżer pamięci relacyjno-wektorowej Enterprise
+# Initialize memory managers
 memory_manager = UnifiedMemoryManager()
 
 
 async def obsidian_folder_watcher():
-    """Asynchroniczny proces w tle monitorujący i indeksujący w locie zmiany w Obsidian Vault (L4)."""
+    """Background watcher for Obsidian vault changes."""
     vault_path = Path("/app/obsidian_vault")
-    logger.info(f"👁️ [System] Uruchamiam automatycznego szpiega L4 dla ścieżki: {vault_path}")
+    logger.info(f"[Watcher] Starting L4 observer: {vault_path}")
     
     try:
         async for changes in awatch(vault_path, force_polling=True):
@@ -33,50 +35,45 @@ async def obsidian_folder_watcher():
                     if file_path.suffix.lower() in [".md", ".pdf"]:
                         await index_single_file(file_path)
     except asyncio.CancelledError:
-        logger.info("[System] Zamykam automatycznego szpiega L4.")
+        logger.info("[Watcher] Stopped.")
     except Exception as err:
-        logger.error(f"⚠️ [System Watcher Błąd] Awaria obserwatora: {err}")
+        logger.error(f"[Watcher] Error: {err}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Obsługuje pełny cykl życia aplikacji w standardzie FastAPI.
-    Inicjalizuje modele, bazy danych oraz uruchamia automatycznych szpiegów L4 w tle.
-    """
-    logger.info("🚀 [System] Uruchamiam asynchroniczny silnik kognitywny Enterprise L0-L4...")
+    """Application lifecycle manager."""
+    logger.info("[System] Starting Enterprise AI Core L0-L4...")
     
-    # 1. Automatyczna synchronizacja modeli Ollama
-    from app.core.llm_factory import LLMFactory
+    # 1. Setup Ollama models
+    from app.services.llm_service import LLMFactory
     await LLMFactory.ensure_models_setup()
     
-    # 2. Inicjalizacja baz danych i schematów L1-L3 (Redis + Postgres + HNSW)
+    # 2. Initialize databases
     await memory_manager.initialize()
     
-    # 3. Jednorazowy skan startowy na wypadek dodania notatek przy wyłączonym bocie
+    # 3. Initial vault scan
     await sync_obsidian_vault()
     
-    # 4. Odpalamy automatycznego szpiega w tle jako asynchroniczne zadanie
+    # 4. Start background watcher
     watcher_task = asyncio.create_task(obsidian_folder_watcher())
     
-    logger.info("✅ [System] Wszystkie warstwy pamięci i automatyczne skanery działają.")
-    
+    logger.info("[System] All layers operational.")
     yield
     
-    logger.info("[System] Zamykam asynchroniczne pule połączeń bazodanowych...")
+    logger.info("[System] Shutting down...")
     watcher_task.cancel()
     await memory_manager.close()
 
 
-# Inicjalizacja instancji FastAPI z podpiętym lifespanem
 app = FastAPI(
     title="AI Cognitive Core Gateway",
-    description="Zunifikowany, asynchroniczny silnik operacyjny systemu AI Enterprise L0-L4",
+    description="Enterprise L0-L4 AI Memory System",
     version="3.0.0",
     lifespan=lifespan
 )
 
-# CORS - allow all origins for development flexibility
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -85,22 +82,54 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Podłączamy ustrukturyzowany routing (Zarówno czat jak i mostek dla VS Code)
+# Routes
 app.include_router(chat.router, prefix="/api")
 app.include_router(cline.router)
 
 
-# Niskolatencyjny kanał dla hardware'u i strumieni wideo
+@app.get("/health")
+async def health_check():
+    """System health check."""
+    health = {"status": "ok", "services": {}}
+    
+    try:
+        if memory_manager.pool:
+            async with memory_manager.pool.acquire() as conn:
+                await conn.fetchval("SELECT 1")
+            health["services"]["postgres"] = "ok"
+        else:
+            health["services"]["postgres"] = "not_initialized"
+    except Exception as e:
+        health["services"]["postgres"] = f"error: {str(e)}"
+        health["status"] = "degraded"
+    
+    try:
+        await redis_client.ping()
+        health["services"]["redis"] = "ok"
+    except Exception as e:
+        health["services"]["redis"] = f"error: {str(e)}"
+        health["status"] = "degraded"
+    
+    try:
+        # get_cache_stats() is synchronous (returns a plain dict) - no await
+        health["services"]["cache"] = get_cache_stats()
+    except Exception as e:
+        health["services"]["cache"] = f"error: {str(e)}"
+    
+    return health
+
+
 @app.websocket("/ws/v1/stream")
-async def websocket_stream_endpoint(websocket: WebSocket):
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket for real-time streaming."""
     await websocket.accept()
-    logger.info("[WebSocket] Zewnętrzny kanał danych/hardware podłączony.")
+    logger.info("[WebSocket] Connected")
     try:
         while True:
             data = await websocket.receive_text()
-            await websocket.send_json({"status": "processed", "message": "Zdarzenie zindeksowane."})
+            await websocket.send_json({"status": "processed", "message": "Indexed."})
     except WebSocketDisconnect:
-        logger.info("[WebSocket] Kanał danych rozłączony.")
+        logger.info("[WebSocket] Disconnected")
 
 
 if __name__ == "__main__":

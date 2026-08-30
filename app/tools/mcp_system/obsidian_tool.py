@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 import aiofiles
 from app.core.config import settings
-from app.core.memory.postgres import UnifiedMemoryManager
+from app.memory.l2.client import UnifiedMemoryManager
 
 log = logging.getLogger("obsidian-tool")
 

@@ -4,8 +4,8 @@ import os
 from pathlib import Path
 import json
 from pypdf import PdfReader
-from app.core.memory.postgres import UnifiedMemoryManager, format_embedding_for_pgvector
-from app.core.llm_factory import LLMFactory
+from app.memory.l2.client import UnifiedMemoryManager, format_embedding_for_pgvector
+from app.services.llm_service import LLMFactory
 
 logger = logging.getLogger(__name__)
 

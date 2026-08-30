@@ -2,7 +2,7 @@ import logging
 from typing import Any, Dict, List, Optional
 import asyncpg
 from app.core.config import settings
-from app.core.memory.postgres import UnifiedMemoryManager
+from app.memory.l2.client import UnifiedMemoryManager
 # Zachowujemy Twoje dotychczasowe guardrails bezpieczeństwa
 from app.security.guardrails import is_safe_select_query, SecurityViolation
 

@@ -96,6 +96,8 @@ services:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_DB}
+      - PINCHTAB_URL=http://pinchtab:9867
+      - PINCHTAB_TOKEN=${PINCHTAB_TOKEN:-pinchtab-dev-token}
     volumes:
       - .:/app
       - ${OBSIDIAN_HOST_PATH}:/app/obsidian_vault
@@ -109,5 +111,22 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # =============================================================================
+  # PinchTab Browser Automation
+  # =============================================================================
+  pinchtab:
+    image: pinchtab/pinchtab:latest
+    container_name: pinchtab
+    ports:
+      - "9867:9867"
+    volumes:
+      - pinchtab_data:/data
+    environment:
+      - PINCHTAB_HOST=0.0.0.0
+      - PINCHTAB_PORT=9867
+      - PINCHTAB_TOKEN=${PINCHTAB_TOKEN:-pinchtab-dev-token}
+    restart: unless-stopped
+
 volumes:
   data:
+  pinchtab_data:
