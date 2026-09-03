@@ -1,0 +1,45 @@
+# Agent System (Enterprise++ v3.5) - MCP Document Parser / PDF Generator Sandbox
+# Spec 6.1: Read-Only FS + Tmpfs 128M + --memory=2g (anti-OOM) + no-new-privileges
+# Runtime: docker run --read-only --memory=2g \
+#               --tmpfs /tmp:size=128M,noexec,nosuid,nodev \
+#               --security-opt no-new-privileges:true --cap-drop ALL \
+#               agent/doc-parser-mcp:v3.5
+
+FROM python:3.11-slim-bookworm
+
+LABEL org.opencontainers.image.title="agent-doc-parser-mcp" \
+      org.opencontainers.image.version="3.5" \
+      org.opencontainers.image.description="Isolated document parser + PDF report generator"
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+# Parser runtime libs (poppler for pdf text, LibreOffice fonts for PDF rendering)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libgl1 \
+        libglib2.0-0 \
+        fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY src/__init__.py /app/src/__init__.py
+COPY src/mcp/__init__.py /app/src/mcp/__init__.py
+COPY src/mcp/doc_parser.py /app/src/mcp/doc_parser.py
+
+RUN pip install --no-cache-dir \
+    pypdf==3.17.4 \
+    python-docx==1.1.0 \
+    openpyxl==3.1.2 \
+    python-pptx==0.6.23 \
+    reportlab==4.0.9 \
+    pydantic==2.5.3
+
+# Non-root user, no shell, no network needed at runtime
+RUN useradd --system --no-create-home --shell /usr/sbin/nologin mcp && \
+    chown -R mcp:mcp /app
+USER mcp
+
+CMD ["python", "-m", "src.mcp.doc_parser"]

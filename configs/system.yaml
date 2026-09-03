@@ -1,0 +1,326 @@
+# Agent System (Enterprise++ v3.5) - Global Infrastructure Configuration
+# 100% Local / Offline - Zero Trust Architecture
+# Single Source of Truth: spec.md Section 9
+
+schema_version: 3.5
+environment: "production_edge"
+system_name: "agent_system_enterprise_v35"
+
+# =============================================================================
+# etcd Distributed Consensus (Raft Protocol)
+# =============================================================================
+etcd:
+  endpoints:
+    - "http://etcd1:2379"
+    - "http://etcd2:2379"
+    - "http://etcd3:2379"
+  connection_timeout_ms: 5000
+  request_timeout_ms: 3000
+  retry_max_attempts: 3
+  retry_backoff_ms: 100
+  lock_ttl_seconds: 30
+  fencing_token_key_prefix: "/fencing/tokens/"
+  session_key_prefix: "/sessions/"
+  health_check_interval_ms: 1000
+
+# =============================================================================
+# NATS JetStream - High-Frequency Telemetry Bus
+# =============================================================================
+nats:
+  endpoints:
+    - "nats://nats1:4222"
+    - "nats://nats2:4222"
+  jetstream:
+    enabled: true
+    stream_name: "telemetry"
+    subjects:
+      - "telemetry.>"
+      - "commands.>"
+      - "events.>"
+    max_age_ms: 500  # TTL < 500ms - Drop-Tail policy
+    max_msgs: 100000
+    max_bytes: 1073741824  # 1GB
+    discard_policy: "old"  # Drop-Tail: discard oldest when full
+    storage_type: "file"
+    replicas: 2
+  consumer:
+    ack_wait_ms: 500
+    max_deliver: 3
+    max_ack_pending: 1000
+  cluster:
+    name: "agent-cluster"
+    enabled: true
+
+# =============================================================================
+# Redis Cluster - State Checkpoints & Distributed Locks
+# =============================================================================
+redis:
+  mode: "cluster"  # Options: standalone, sentinel, cluster
+  endpoints:
+    - host: "redis"
+      port: 6379
+  sentinel:
+    master_name: "mymaster"
+    nodes:
+      - host: "redis-sentinel-1"
+        port: 26379
+      - host: "redis-sentinel-2"
+        port: 26379
+      - host: "redis-sentinel-3"
+        port: 26379
+  connection:
+    max_connections: 50
+    socket_timeout_ms: 2000
+    socket_connect_timeout_ms: 1000
+    retry_on_timeout: true
+  checkpoint:
+    key_prefix: "checkpoint:"
+    ttl_seconds: 3600
+    encryption_enabled: true
+  redlock:
+    retry_count: 3
+    retry_delay_ms: 200
+    clock_drift_factor: 0.01
+
+# =============================================================================
+# Qdrant Vector Database - Long-Term Memory (Mem0 L0-L4)
+# =============================================================================
+qdrant:
+  host: "qdrant"
+  port: 6333
+  grpc_port: 6334
+  api_key: "${QDRANT_API_KEY}"  # Loaded from environment variable
+  https: false
+  persistence:
+    storage_path: "/mnt/encrypted_luks/qdrant_data"
+    encryption: "LUKS2"
+    snapshot_path: "/mnt/encrypted_luks/qdrant_snapshots"
+  collection:
+    name: "agent_memory"
+    vector_size: 1536  # OpenAI embedding size
+    distance: "Cosine"
+    hnsm:
+      m: 16
+      ef_construct: 100
+      full_scan_threshold: 10000
+  search:
+    ef: 128
+    limit: 10
+    score_threshold: 0.7
+  healthcheck:
+    timeout_ms: 5000
+    retry_attempts: 5
+
+# =============================================================================
+# NVIDIA GPU & MPS Configuration
+# =============================================================================
+gpu:
+  device_id: 0
+  cuda_visible_devices: "0"
+  mps:
+    enabled: true
+    allocation:
+      vllm_percent: 50      # 50% VRAM for vLLM
+      roboflow_percent: 30   # 30% VRAM for Roboflow CV/YOLO
+      tools_percent: 20      # 20% VRAM for tools and parsers
+    control_port: 5555
+    memory_limit_mb: null  # Auto-detect from GPU
+  thermal:
+    warning_threshold_celsius: 80
+    critical_threshold_celsius: 85
+    emergency_threshold_celsius: 90
+    polling_interval_ms: 500
+    throttle_actions:
+      - "reduce_fps"
+      - "switch_to_fallback_model"
+      - "pause_non_critical_inference"
+    emergency_actions:
+      - "hard_stop_all_inference"
+      - "trigger_graceful_drainage"
+  models:
+    primary:
+      name: "llama-3.1-70b"
+      engine: "vllm"
+      max_model_len: 8192
+      gpu_memory_utilization: 0.50
+      enable_prefix_caching: true
+    fallback:
+      name: "qwen-2.5-7b"
+      engine: "vllm"
+      max_model_len: 4096
+      gpu_memory_utilization: 0.30
+      enable_prefix_caching: true
+    vision:
+      name: "yolo-world"
+      engine: "roboflow"
+      gpu_memory_utilization: 0.30
+      confidence_threshold: 0.5
+
+# =============================================================================
+# Fencing Tokens & Safety
+# =============================================================================
+fencing:
+  initial_token_value: 1000
+  token_increment: 1
+  max_token_value: 999999999
+  validation:
+    strict_monotonicity: true
+    reject_equal_tokens: true
+    reject_stale_threshold_ms: 1000
+  storage:
+    etcd_key_prefix: "/fencing/accepted/"
+    redis_key_prefix: "fencing:accepted:"
+    ttl_seconds: 3600
+
+# =============================================================================
+# Hardware Safety - Dead Man's Switch
+# =============================================================================
+hardware_safety:
+  heartbeat:
+    enabled: true
+    interval_ms: 200
+    uart_port: "/dev/ttyS0"
+    uart_baudrate: 115200
+    heartbeat_byte: "0xAA"
+    failure_action: "RTL"  # Return To Launch
+    failure_threshold_ms: 600  # 3 missed heartbeats
+  watchdog:
+    enabled: true
+    device: "/dev/watchdog"
+    timeout_seconds: 10
+    keepalive_interval_seconds: 5
+
+# =============================================================================
+# Master Clock - PTP IEEE 1588 / GPS Synchronization
+# =============================================================================
+master_clock:
+  protocol: "PTP"  # Options: PTP, GPS, NTP (fallback only)
+  ptp:
+    domain: 0
+    transport: "L2"  # Layer 2 Ethernet
+    delay_mechanism: "E2E"
+    network_interface: "eth0"
+  gps:
+    device: "/dev/ttyUSB0"
+    baudrate: 9600
+    fix_timeout_ms: 5000
+  sync:
+    max_offset_us: 1000  # 1 microsecond max offset
+    holdover_seconds: 300
+
+# =============================================================================
+# Audit & Merkle Tree Configuration
+# =============================================================================
+audit:
+  merkle_tree:
+    hash_algorithm: "sha256"
+    leaf_prefix: "0x00"
+    internal_prefix: "0x01"
+    hash_combine: "concat_then_hash"
+  ring_buffer:
+    capacity: 100
+    group_commit_size: 100
+    flush_interval_ms: 5000
+    storage_path: "/var/log/agent_audit/"
+    max_file_size_mb: 100
+    rotation_count: 10
+  integrity:
+    verify_on_startup: true
+    snapshot_verification: true
+
+# =============================================================================
+# MCP Sandbox Configuration
+# =============================================================================
+mcp:
+  sandbox:
+    read_only_fs: true
+    tmpfs_size_mb: 128
+    no_new_privileges: true
+    seccomp_profile: "/etc/agent/seccomp_profile.json"
+    apparmor_profile: "agent-mcp"
+  servers:
+    doc_parser:
+      enabled: true
+      max_file_size_mb: 50
+      supported_formats:
+        - "pdf"
+        - "docx"
+        - "xlsx"
+        - "pptx"
+        - "html"
+        - "md"
+      timeout_seconds: 30
+    mavlink_ctrl:
+      enabled: true
+      connection_string: "/dev/ttyS1:57600"
+      system_id: 1
+      component_id: 1
+      command_timeout_ms: 5000
+      fencing_check: true
+
+# =============================================================================
+# LangGraph Configuration
+# =============================================================================
+langgraph:
+  max_retries: 3
+  recursion_limit: 25
+  checkpoint_interval: 1
+  semantic_cache:
+    enabled: true
+    similarity_threshold: 0.95
+    max_entries: 10000
+    ttl_seconds: 3600
+
+# =============================================================================
+# Prompt Management (Hydra/Dynaconf)
+# =============================================================================
+prompts:
+  config_dir: "configs/prompts"
+  debounce_ms: 300
+  hot_reload: true
+  atomic_replace: true
+  fallback_on_validation_error: true
+  validation:
+    strict_schema: true
+    max_prompt_length: 100000
+
+# =============================================================================
+# Observability (Local Stack)
+# =============================================================================
+observability:
+  prometheus:
+    enabled: true
+    port: 9090
+    scrape_interval_ms: 1000
+    metrics_path: "/metrics"
+  grafana:
+    enabled: true
+    port: 3000
+  phoenix:
+    enabled: true
+    port: 6006
+  dcgm:
+    enabled: true
+    polling_interval_ms: 1000
+    field_ids:
+      - 1001  # GPU temperature
+      - 1003  # GPU utilization
+      - 1004  # Memory utilization
+      - 203    # Power draw
+
+# =============================================================================
+# Security & Encryption
+# =============================================================================
+security:
+  luks:
+    enabled: true
+    device: "/dev/nvme0n1p3"
+    mount_point: "/mnt/encrypted_luks"
+    key_slot: 0
+  tpm:
+    enabled: true
+    device: "/dev/tpm0"
+  secrets:
+    rotation_interval_hours: 24
+    in_memory_only: true
+    lock_memory: true  # Prevent core dump

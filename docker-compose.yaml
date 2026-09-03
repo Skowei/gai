@@ -1,0 +1,281 @@
+#
+# Agent System (Enterprise++ v3.5) - Production Orchestration
+# 100% Local / Offline - Zero Trust Architecture
+#
+# CRITICAL: Ensure LUKS volume is mounted before starting Qdrant:
+#   cryptsetup luksOpen /dev/nvme0n1p3 luks_qdrant
+#   mount /dev/mapper/luks_qdrant /mnt/encrypted_luks
+#
+#   OR for first-time setup:
+#   cryptsetup luksFormat /dev/nvme0n1p3 --type luks2
+#   cryptsetup luksOpen /dev/nvme0n1p3 luks_qdrant
+#   mkfs.ext4 /dev/mapper/luks_qdrant
+#   mount /dev/mapper/luks_qdrant /mnt/encrypted_luks
+#
+version: "3.8"
+
+services:
+  # ============================================================================
+  # etcd Distributed Consensus (Raft Protocol)
+  # ============================================================================
+  etcd1:
+    image: quay.io/coreos/etcd:v3.5.9
+    container_name: agent-etcd1
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M
+    environment:
+      - ETCD_NAME=etcd1
+      - ETCD_DATA_DIR=/etcd/data
+      - ETCD_LISTEN_PEER_URLS=http://etcd1:2380
+      - ETCD_LISTEN_CLIENT_URLS=http://etcd1:2379
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd1:2379
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd1:2380
+      - ETCD_INITIAL_CLUSTER=etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_INITIAL_CLUSTER_TOKEN=agent-cluster-token
+      - ETCD_ELECTION_TIMEOUT=5000
+      - ETCD_HEARTBEAT_INTERVAL=1000
+    networks:
+      - agent_internal
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    volumes:
+      - etcd1_data:/etcd/data
+
+  etcd2:
+    image: quay.io/coreos/etcd:v3.5.9
+    container_name: agent-etcd2
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M
+    environment:
+      - ETCD_NAME=etcd2
+      - ETCD_DATA_DIR=/etcd/data
+      - ETCD_LISTEN_PEER_URLS=http://etcd2:2380
+      - ETCD_LISTEN_CLIENT_URLS=http://etcd2:2379
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd2:2379
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd2:2380
+      - ETCD_INITIAL_CLUSTER=etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_INITIAL_CLUSTER_TOKEN=agent-cluster-token
+      - ETCD_ELECTION_TIMEOUT=5000
+      - ETCD_HEARTBEAT_INTERVAL=1000
+    networks:
+      - agent_internal
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    volumes:
+      - etcd2_data:/etcd/data
+
+  etcd3:
+    image: quay.io/coreos/etcd:v3.5.9
+    container_name: agent-etcd3
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M
+    environment:
+      - ETCD_NAME=etcd3
+      - ETCD_DATA_DIR=/etcd/data
+      - ETCD_LISTEN_PEER_URLS=http://etcd3:2380
+      - ETCD_LISTEN_CLIENT_URLS=http://etcd3:2379
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd3:2379
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd3:2380
+      - ETCD_INITIAL_CLUSTER=etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_INITIAL_CLUSTER_TOKEN=agent-cluster-token
+      - ETCD_ELECTION_TIMEOUT=5000
+      - ETCD_HEARTBEAT_INTERVAL=1000
+    networks:
+      - agent_internal
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    volumes:
+      - etcd3_data:/etcd/data
+
+  # ============================================================================
+  # NATS JetStream High-Availability Cluster
+  # ============================================================================
+  nats1:
+    image: nats:2.9-alpine
+    container_name: agent-nats1
+    restart: unless-stopped
+    command: >
+      --name nats1
+      --cluster_name agent-cluster
+      --cluster_listen 0.0.0.0:6222
+      --routes nats://nats2:6222,nats://nats3:6222
+      --jetstream
+      --store_dir /data
+      --max_memory_store 256MB
+      --max_file_store 1GB
+      --max_pending 67108864
+      --max_age 500ms
+    networks:
+      - agent_internal
+    volumes:
+      - nats_data_1:/data
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  nats2:
+    image: nats:2.9-alpine
+    container_name: agent-nats2
+    restart: unless-stopped
+    command: >
+      --name nats2
+      --cluster_name agent-cluster
+      --cluster_listen 0.0.0.0:6222
+      --routes nats://nats1:6222,nats://nats3:6222
+      --jetstream
+      --store_dir /data
+      --max_memory_store 256MB
+      --max_file_store 1GB
+      --max_pending 67108864
+      --max_age 500ms
+    networks:
+      - agent_internal
+    volumes:
+      - nats_data_2:/data
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ============================================================================
+  # Redis (State Checkpoints & Distributed Locks)
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: agent-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --save 60 1
+      --loglevel warning
+      --maxmemory 512mb
+      --maxmemory-policy noeviction
+    networks:
+      - agent_internal
+    volumes:
+      - redis_data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ============================================================================
+  # Qdrant Vector Database (Long-Term Memory)
+  # ============================================================================
+  # CRITICAL: LUKS volume must be mounted at /mnt/encrypted_luks
+  #   before starting this service. See header comments above.
+  qdrant:
+    image: qdrant/qdrant:v1.7.3
+    container_name: agent-qdrant
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+      - QDRANT__LOG_LEVEL=WARN
+    networks:
+      - agent_internal
+    volumes:
+      # LUKS encrypted volume - MUST be mounted before container start
+      - /mnt/encrypted_luks/qdrant_data:/qdrant/storage
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # ============================================================================
+  # MCP MAVLink Controller Sandbox
+  # ============================================================================
+  mavlink_mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.mavlink_mcp
+    container_name: agent-mavlink-mcp
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=128M,noexec,nosuid,nodev
+    environment:
+      - MAVLINK_CONNECTION=/dev/ttyS1:57600
+      - ETCD_ENDPOINTS=http://etcd1:2379,http://etcd2:2379,http://etcd3:2379
+    networks:
+      - agent_internal
+    devices:
+      - /dev/ttyS1:/dev/ttyS1
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # ============================================================================
+  # MCP Document Parser Sandbox
+  # ============================================================================
+  doc_parser_mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.doc_parser_mcp
+    container_name: agent-doc-parser-mcp
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=128M,noexec,nosuid,nodev
+    environment:
+      - MAX_FILE_SIZE_MB=50
+    networks:
+      - agent_internal
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+# ==============================================================================
+# Networks
+# ==============================================================================
+networks:
+  agent_internal:
+    driver: bridge
+    internal: true
+    name: agent_internal
+
+# ==============================================================================
+# Volumes
+# ==============================================================================
+volumes:
+  etcd1_data:
+    driver: local
+  etcd2_data:
+    driver: local
+  etcd3_data:
+    driver: local
+  nats_data_1:
+    driver: local
+  nats_data_2:
+    driver: local
+  redis_data:
+    driver: local

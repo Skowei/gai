@@ -1,0 +1,47 @@
+# Agent System (Enterprise++ v3.5) - MCP MAVLink Controller Sandbox
+# Spec 6.1: Read-Only FS + Tmpfs + memory caps + no-new-privileges
+# Runtime: docker run --read-only --tmpfs /tmp:size=128M,noexec,nosuid,nodev \
+#               --security-opt no-new-privileges:true --cap-drop ALL \
+#               --device /dev/ttyS1 agent/mavlink-mcp:v3.5
+
+FROM python:3.11-slim-bookworm
+
+LABEL org.opencontainers.image.title="agent-mavlink-mcp" \
+      org.opencontainers.image.version="3.5" \
+      org.opencontainers.image.description="Isolated MAVLink drone controller (fencing tokens + etcd locks)"
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+# System deps: serial tools only; no compilers, no shell utilities beyond runtime
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        python3-serial \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Application code (read-only at runtime; only /tmp tmpfs is writable)
+COPY src/__init__.py /app/src/__init__.py
+COPY src/core/__init__.py /app/src/core/__init__.py
+COPY src/core/state.py /app/src/core/state.py
+COPY src/core/migrators.py /app/src/core/migrators.py
+COPY src/safety/__init__.py /app/src/safety/__init__.py
+COPY src/safety/etcd_client.py /app/src/safety/etcd_client.py
+COPY src/safety/redlock_mgr.py /app/src/safety/redlock_mgr.py
+COPY src/mcp/__init__.py /app/src/mcp/__init__.py
+COPY src/mcp/mavlink_ctrl.py /app/src/mcp/mavlink_ctrl.py
+
+RUN pip install --no-cache-dir \
+    pymavlink==2.4.41 \
+    pyserial==3.5 \
+    etcd3==0.12.0 \
+    pydantic==2.5.3
+
+# Non-root user, no shell needed at runtime
+RUN useradd --system --no-create-home --shell /usr/sbin/nologin mcp && \
+    chown -R mcp:mcp /app
+USER mcp
+
+CMD ["python", "-m", "src.mcp.mavlink_ctrl"]
